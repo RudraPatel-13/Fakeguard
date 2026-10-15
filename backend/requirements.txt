@@ -4,6 +4,13 @@ fastapi==0.141.1
 uvicorn==0.54.0
 pydantic==2.13.5
 nltk==3.10.3
+Pillow==12.3.0
+pytesseract==0.3.13
+python-multipart==0.0.20
 
 # Dev / testing only (not needed in production)
 pytest==9.1.1
+
+# NOTE: Tesseract OCR binary must be installed separately.
+# Windows: https://github.com/UB-Mannheim/tesseract/wiki
+# After install, ensure tesseract.exe is on PATH or set env var TESSERACT_CMD.

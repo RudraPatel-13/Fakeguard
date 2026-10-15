@@ -11,7 +11,9 @@ a configurable, rule-based scoring engine.
 |-------|-------------|
 | **Phase 1** | Project setup — React + Vite frontend, FastAPI backend |
 | **Phase 2** | Core analyzer — hardcoded keyword rules, article + image inspection UI |
-| **Phase 3** | Dynamic keyword library — external JSON config with hot-reload (no server restart required) |
+| **Phase 3a** | Dynamic keyword library — external JSON config with hot-reload |
+| **Phase 3b** | WordNet synonym detection — lexical expansion via NLTK |
+| **Phase 3c** | Image forensics — OCR text extraction, metadata inspection, Error Level Analysis |
 
 ---
 
@@ -23,6 +25,8 @@ a configurable, rule-based scoring engine.
 | Backend | Python 3.11, FastAPI, Uvicorn |
 | Analyzer | Rule-based scoring engine (`analyzer.py`) |
 | Config | External JSON keyword library (`keywords.json`) |
+| Synonym detection | NLTK WordNet (`wordnet_service.py`) |
+| Image analysis | Pillow 12, pytesseract 0.3.13, ELA (`image_analyzer.py`) |
 | Tests | pytest 9, starlette TestClient |
 
 ---
@@ -198,11 +202,13 @@ python acceptance_test.py
 ## Running the Tests
 
 ```bash
-# All three suites (177 tests total)
+# All five suites (280 tests total — 279 passed, 1 skipped)
 backend\.venv\Scripts\python.exe -m pytest \
   backend/app/test_keyword_loader.py \
   backend/app/test_analyzer_integration.py \
   backend/app/test_api.py \
+  backend/app/test_wordnet_service.py \
+  backend/app/test_image_analyzer.py \
   -v
 ```
 
@@ -211,7 +217,105 @@ backend\.venv\Scripts\python.exe -m pytest \
 | `test_keyword_loader.py` | 69 | Loader validation, hot-reload, thread-safety |
 | `test_analyzer_integration.py` | 39 | Scoring engine, config-change behavior |
 | `test_api.py` | 69 | HTTP endpoints, frontend compatibility, 503 safety |
-| **Total** | **177** | |
+| `test_wordnet_service.py` | 57 | WordNet availability, synonym retrieval, deduplication, API compat |
+| `test_image_analyzer.py` | 46 | Image validation, OCR, metadata, ELA, pipeline, API structure |
+| **Total** | **280** | **279 passed, 1 skipped (real Tesseract integration)** |
+
+> The skipped test (`test_real_ocr_on_text_image`) requires Tesseract to be installed.
+> All 279 other tests pass with no external executables required.
+
+---
+
+## Image Analysis — Layers 1 and 2
+
+### POST /analyze-image
+
+Accepts a multipart image upload and returns a structured JSON result.
+
+```bash
+curl -X POST http://127.0.0.1:8000/analyze-image \
+  -F "file=@/path/to/image.jpg"
+```
+
+Response structure:
+
+```json
+{
+  "status": "ok",
+  "error": null,
+  "file_name": "image.jpg",
+  "ocr": {
+    "status": "success",
+    "text": "SHOCKING REVELATION ...",
+    "character_count": 42,
+    "warning": "OCR output may contain recognition errors."
+  },
+  "text_analysis": {
+    "score": 20,
+    "classification": "Suspicious",
+    "indicators": ["Suspicious keyword detected: \"shocking\""],
+    "word_count": 3
+  },
+  "metadata": {
+    "format": "JPEG",
+    "width": 1920,
+    "height": 1080,
+    "file_size_bytes": 245760,
+    "mode": "RGB",
+    "exif_available": true,
+    "exif_fields": { "Software": "Adobe Photoshop", "DateTime": "2024:01:01 12:00:00" },
+    "observations": ["Software tag: 'Adobe Photoshop'. ..."]
+  },
+  "ela": {
+    "performed": true,
+    "observations": ["Moderate ELA variance...", "ELA does not prove tampering."],
+    "ela_image": "data:image/png;base64,...",
+    "limitation_note": "ELA highlights areas that recompressed differently..."
+  }
+}
+```
+
+---
+
+## Tesseract OCR Installation (Windows)
+
+The OCR feature requires Tesseract to be installed separately on your machine.
+Python `pytesseract` is just a wrapper — it cannot function without the Tesseract executable.
+
+**Step 1 — Download and install Tesseract:**
+
+1. Go to: <https://github.com/UB-Mannheim/tesseract/wiki>
+2. Download the latest Windows installer (e.g. `tesseract-ocr-w64-setup-5.x.x.exe`).
+3. Run the installer. Note the installation path — default is:
+   `C:\Program Files\Tesseract-OCR\tesseract.exe`
+4. The backend auto-detects this path on Windows. No extra configuration needed.
+
+**Step 2 — Alternative: add to PATH:**
+
+If Tesseract is installed in a custom location, either:
+- Add the folder to your Windows `PATH`, **or**
+- Set environment variable `TESSERACT_CMD` to the full `.exe` path before starting the backend:
+
+```powershell
+$env:TESSERACT_CMD = "C:\Custom\Path\tesseract.exe"
+backend\.venv\Scripts\python.exe -m uvicorn main:app --app-dir backend/app --host 127.0.0.1 --port 8000
+```
+
+**Without Tesseract:** The backend starts normally. OCR returns `status: "ocr_unavailable"` with
+installation instructions. All other features (text analyzer, metadata, ELA) still work.
+
+---
+
+## Image Analysis Limitations
+
+| Finding | What it means | What it does NOT mean |
+|---------|--------------|----------------------|
+| Suspicious OCR text | Extracted text matches credibility warning patterns | The image itself was manipulated |
+| Missing EXIF | Metadata was not embedded or was stripped | The image is fake |
+| Software tag (e.g. Photoshop) | The file was processed by that application | The content was fabricated |
+| High ELA variance | Areas recompressed differently | Tampering is proven |
+| Low ELA variance | Image appears uniformly compressed | Image is authentic |
+| ELA on PNG | Always includes format-conversion artifacts | Direct evidence of editing |
 
 ---
 
@@ -221,11 +325,10 @@ backend\.venv\Scripts\python.exe -m pytest \
 
 | Branch | Purpose |
 |--------|---------|
-| `master` | Stable baseline (Phase 2 complete) |
-| `feature/phase3-dynamic-keyword-loader` | Phase 3 feature development |
-
-Phase 3 was developed entirely on the feature branch and merged into `master`
-after all 177 tests passed.
+| `master` | Stable baseline |
+| `feature/phase3-dynamic-keyword-loader` | Phase 3a — dynamic keyword library |
+| `feature/wordnet-synonym-detection` | Phase 3b — WordNet synonym expansion |
+| `feature/image-forensics` | Phase 3c — OCR + metadata + ELA |
 
 ### Commit conventions
 

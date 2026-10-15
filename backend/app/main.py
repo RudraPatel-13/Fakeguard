@@ -10,13 +10,14 @@ React frontend requires no modifications.
 
 import logging
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 import wordnet_service
 from analyzer import analyze_text
+from image_analyzer import analyze_image
 from keyword_loader import KeywordLibraryError, get_config
 
 # ---------------------------------------------------------------------------
@@ -129,6 +130,47 @@ def analyze_article(article: ArticleRequest):
         "indicators": result["indicators"],
         "word_count": result["word_count"],
     }
+
+
+@app.post("/analyze-image")
+async def analyze_image_endpoint(file: UploadFile = File(...)):
+    """
+    Analyse an uploaded image.
+
+    Accepts multipart/form-data with a single field named 'file'.
+
+    Response structure:
+      status        -- 'ok' | 'error'
+      error         -- human-readable error string, or null
+      file_name     -- original filename
+      ocr           -- {status, text, character_count, warning}
+      text_analysis -- score/classification/indicators (null if no OCR text)
+      metadata      -- format, dimensions, file size, EXIF findings
+      ela           -- Error Level Analysis result + visualisation
+
+    Existing endpoints (/, /health, /analyze) are unchanged.
+    Uploaded bytes are processed in-memory; no file is saved to disk.
+    """
+    filename = file.filename or "upload"
+    logger.info(
+        "POST /analyze-image  filename=%r  content_type=%r",
+        filename, file.content_type,
+    )
+
+    try:
+        file_bytes = await file.read()
+    except Exception as exc:
+        logger.error("File read error: %s", exc)
+        raise HTTPException(status_code=400, detail="Could not read uploaded file.")
+
+    result = analyze_image(file_bytes, filename)    # never raises
+
+    logger.info(
+        "Image analysis complete: status=%r  ocr_status=%r",
+        result.get("status"),
+        result.get("ocr", {}).get("status") if result.get("ocr") else "n/a",
+    )
+    return result
 
 
 @app.get("/keywords")

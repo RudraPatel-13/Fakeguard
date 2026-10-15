@@ -10,6 +10,10 @@ function App() {
   const [imagePreview, setImagePreview] = useState(null)
   const [imageResult, setImageResult] = useState(null)
 
+  // Backend image analysis state
+  const [imageAnalyzing, setImageAnalyzing] = useState(false)
+  const [backendImageResult, setBackendImageResult] = useState(null)
+
   const analyzeArticle = async () => {
     if (!articleText.trim()) {
       setResult({
@@ -64,6 +68,7 @@ function App() {
 
     setSelectedImage(file)
     setImageResult(null)
+    setBackendImageResult(null)
 
     const imageURL = URL.createObjectURL(file)
     setImagePreview(imageURL)
@@ -83,6 +88,41 @@ function App() {
     image.src = imageURL
   }
 
+  const analyzeImageBackend = async () => {
+    if (!selectedImage) return
+
+    setImageAnalyzing(true)
+    setBackendImageResult(null)
+
+    const formData = new FormData()
+    formData.append("file", selectedImage)
+
+    try {
+      const response = await fetch("http://127.0.0.1:8000/analyze-image", {
+        method: "POST",
+        body: formData,
+      })
+
+      if (!response.ok) {
+        throw new Error("Server error")
+      }
+
+      const data = await response.json()
+      setBackendImageResult(data)
+    } catch (error) {
+      setBackendImageResult({
+        status: "error",
+        error: "Could not connect to the FakeGuard analysis server.",
+        ocr: null,
+        text_analysis: null,
+        metadata: null,
+        ela: null,
+      })
+    } finally {
+      setImageAnalyzing(false)
+    }
+  }
+
   const getResultClass = () => {
     if (!result) return ""
 
@@ -99,6 +139,29 @@ function App() {
     }
 
     return "result-neutral"
+  }
+
+  const getTextScoreClass = (classification) => {
+    if (classification === "Credible") return "result-credible"
+    if (classification === "Suspicious") return "result-suspicious"
+    if (classification === "Likely Fake") return "result-fake"
+    return "result-neutral"
+  }
+
+  const getOcrStatusLabel = (status) => {
+    const labels = {
+      success: "Text extracted",
+      no_text: "No text found",
+      ocr_unavailable: "OCR unavailable",
+      error: "Extraction error",
+    }
+    return labels[status] || status
+  }
+
+  const formatFileSize = (bytes) => {
+    if (bytes < 1024) return `${bytes} B`
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+    return `${(bytes / 1024 / 1024).toFixed(2)} MB`
   }
 
   return (
@@ -137,7 +200,7 @@ function App() {
           <div className="page-width">
 
             <div className="hero-label">
-              PHASE 2 • RULE-BASED ANALYSIS SYSTEM
+              PHASE 3 • DYNAMIC RULES + LEXICAL DETECTION + IMAGE FORENSICS
             </div>
 
             <h1 className="hero-title">
@@ -151,7 +214,7 @@ function App() {
               <p className="hero-description">
                 FakeGuard examines news content for observable
                 credibility indicators using transparent,
-                rule-based analysis.
+                rule-based analysis and lexical synonym detection.
               </p>
 
               <div className="hero-note">
@@ -325,8 +388,10 @@ function App() {
               </div>
 
               <p>
-                Upload a JPG or PNG image to inspect
-                basic file and image properties.
+                Upload a JPG, PNG or WebP image to extract
+                embedded text, inspect metadata, and perform
+                basic forensic analysis. Results are
+                observations — not conclusions.
               </p>
             </div>
 
@@ -338,7 +403,7 @@ function App() {
 
                 <div className="panel-header">
                   <span>IMAGE INPUT</span>
-                  <span>JPG / PNG</span>
+                  <span>JPG / PNG / WEBP</span>
                 </div>
 
                 <label
@@ -365,7 +430,7 @@ function App() {
                   <input
                     id="image-upload"
                     type="file"
-                    accept="image/png,image/jpeg"
+                    accept="image/png,image/jpeg,image/webp"
                     onChange={handleImageSelect}
                     hidden
                   />
@@ -378,6 +443,20 @@ function App() {
                     <strong>
                       {selectedImage.name}
                     </strong>
+                  </div>
+                )}
+
+                {selectedImage && (
+                  <div className="image-analyze-footer">
+                    <button
+                      onClick={analyzeImageBackend}
+                      disabled={imageAnalyzing}
+                      className="analyze-image-button"
+                    >
+                      {imageAnalyzing
+                        ? "ANALYZING..."
+                        : "ANALYZE IMAGE →"}
+                    </button>
                   </div>
                 )}
 
@@ -459,6 +538,279 @@ function App() {
               )}
 
             </div>
+
+            {/* ---- BACKEND ANALYSIS RESULTS ---- */}
+
+            {imageAnalyzing && (
+              <div className="image-analyzing-notice">
+                <span className="analyzing-spinner">◌</span>
+                Extracting text, inspecting metadata and running ELA…
+              </div>
+            )}
+
+            {backendImageResult && backendImageResult.status === "error" && (
+              <div className="image-analysis-error">
+                <span>ERROR</span>
+                <p>{backendImageResult.error}</p>
+              </div>
+            )}
+
+            {backendImageResult && backendImageResult.status === "ok" && (
+              <div className="backend-results">
+
+                {/* --- OCR SECTION --- */}
+                <div className="analysis-block">
+
+                  <div className="analysis-block-header">
+                    <span className="block-tag">OCR</span>
+                    <span className="block-title">
+                      TEXT EXTRACTION
+                    </span>
+                    <span className={`ocr-status-badge ocr-${backendImageResult.ocr.status}`}>
+                      {getOcrStatusLabel(backendImageResult.ocr.status)}
+                    </span>
+                  </div>
+
+                  {backendImageResult.ocr.warning && (
+                    <div className="analysis-notice">
+                      {backendImageResult.ocr.warning}
+                    </div>
+                  )}
+
+                  {backendImageResult.ocr.status === "success" && (
+                    <div className="ocr-text-block">
+                      <div className="ocr-text-label">
+                        EXTRACTED TEXT
+                        <span>
+                          {backendImageResult.ocr.character_count} characters
+                        </span>
+                      </div>
+                      <pre className="ocr-text-content">
+                        {backendImageResult.ocr.text}
+                      </pre>
+                    </div>
+                  )}
+
+                </div>
+
+                {/* --- TEXT ANALYSIS SECTION --- */}
+                {backendImageResult.text_analysis && (
+                  <div className="analysis-block">
+
+                    <div className="analysis-block-header">
+                      <span className="block-tag">TEXT</span>
+                      <span className="block-title">
+                        CONTENT ANALYSIS
+                      </span>
+                    </div>
+
+                    <div
+                      className={`image-text-result ${getTextScoreClass(
+                        backendImageResult.text_analysis.classification
+                      )}`}
+                    >
+
+                      <div className="image-score-row">
+                        <div className="image-score-num">
+                          {backendImageResult.text_analysis.score}
+                        </div>
+                        <div>
+                          <div className="image-score-label">
+                            CREDIBILITY INDICATOR SCORE
+                          </div>
+                          <div className="image-classification">
+                            {backendImageResult.text_analysis.classification}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="result-divider" />
+
+                      <div className="indicators">
+                        <div className="indicator-title">
+                          OBSERVED INDICATORS (from OCR text)
+                        </div>
+                        {backendImageResult.text_analysis.indicators.map(
+                          (ind, i) => (
+                            <div key={i} className="indicator">
+                              <span>—</span>
+                              <p>{ind}</p>
+                            </div>
+                          )
+                        )}
+                      </div>
+
+                    </div>
+
+                    <div className="analysis-notice analysis-notice-dim">
+                      Score reflects the extracted text only. Suspicious text
+                      in an image does not confirm the image itself was manipulated.
+                    </div>
+
+                  </div>
+                )}
+
+                {/* --- METADATA SECTION --- */}
+                {backendImageResult.metadata && (
+                  <div className="analysis-block">
+
+                    <div className="analysis-block-header">
+                      <span className="block-tag">META</span>
+                      <span className="block-title">
+                        IMAGE METADATA
+                      </span>
+                    </div>
+
+                    <div className="meta-grid">
+
+                      <div className="detail-row">
+                        <span>FORMAT</span>
+                        <strong>
+                          {backendImageResult.metadata.format}
+                        </strong>
+                      </div>
+
+                      <div className="detail-row">
+                        <span>DIMENSIONS</span>
+                        <strong>
+                          {backendImageResult.metadata.width} ×{" "}
+                          {backendImageResult.metadata.height} px
+                        </strong>
+                      </div>
+
+                      <div className="detail-row">
+                        <span>FILE SIZE</span>
+                        <strong>
+                          {formatFileSize(
+                            backendImageResult.metadata.file_size_bytes
+                          )}
+                        </strong>
+                      </div>
+
+                      <div className="detail-row">
+                        <span>COLOUR MODE</span>
+                        <strong>
+                          {backendImageResult.metadata.mode}
+                        </strong>
+                      </div>
+
+                      <div className="detail-row">
+                        <span>EXIF DATA</span>
+                        <strong>
+                          {backendImageResult.metadata.exif_available
+                            ? "Present"
+                            : "Not found"}
+                        </strong>
+                      </div>
+
+                    </div>
+
+                    {/* EXIF fields */}
+                    {backendImageResult.metadata.exif_available &&
+                      Object.keys(backendImageResult.metadata.exif_fields).length > 0 && (
+                        <div className="exif-block">
+                          <div className="exif-block-label">
+                            EXIF FIELDS
+                          </div>
+                          {Object.entries(
+                            backendImageResult.metadata.exif_fields
+                          ).map(([key, val]) => (
+                            <div key={key} className="detail-row exif-row">
+                              <span>{key}</span>
+                              <strong>{val}</strong>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                    {/* Observations */}
+                    {backendImageResult.metadata.observations.length > 0 && (
+                      <div className="observations-block">
+                        <div className="observations-label">
+                          OBSERVATIONS
+                        </div>
+                        {backendImageResult.metadata.observations.map(
+                          (obs, i) => (
+                            <div key={i} className="observation-item">
+                              <span>—</span>
+                              <p>{obs}</p>
+                            </div>
+                          )
+                        )}
+                      </div>
+                    )}
+
+                  </div>
+                )}
+
+                {/* --- ELA SECTION --- */}
+                {backendImageResult.ela && (
+                  <div className="analysis-block">
+
+                    <div className="analysis-block-header">
+                      <span className="block-tag">ELA</span>
+                      <span className="block-title">
+                        ERROR LEVEL ANALYSIS
+                      </span>
+                      <span className={`ocr-status-badge ocr-${backendImageResult.ela.performed ? "success" : "no_text"}`}>
+                        {backendImageResult.ela.performed ? "Performed" : "Skipped"}
+                      </span>
+                    </div>
+
+                    {!backendImageResult.ela.performed &&
+                      backendImageResult.ela.reason_skipped && (
+                        <div className="analysis-notice">
+                          {backendImageResult.ela.reason_skipped}
+                        </div>
+                      )}
+
+                    {backendImageResult.ela.ela_image && (
+                      <div className="ela-image-block">
+                        <div className="ela-image-label">
+                          ELA VISUALISATION
+                          <span>Brighter = larger recompression difference</span>
+                        </div>
+                        <img
+                          src={backendImageResult.ela.ela_image}
+                          alt="Error Level Analysis visualisation"
+                          className="ela-image"
+                        />
+                      </div>
+                    )}
+
+                    {backendImageResult.ela.observations.length > 0 && (
+                      <div className="observations-block">
+                        <div className="observations-label">
+                          ELA FINDINGS
+                        </div>
+                        {backendImageResult.ela.observations.map(
+                          (obs, i) => (
+                            <div key={i} className="observation-item">
+                              <span>—</span>
+                              <p>{obs}</p>
+                            </div>
+                          )
+                        )}
+                      </div>
+                    )}
+
+                  </div>
+                )}
+
+                {/* Disclaimer */}
+                <div className="image-disclaimer">
+                  <span>IMPORTANT LIMITATIONS</span>
+                  <ul>
+                    <li>Suspicious OCR text does not prove the image was manipulated.</li>
+                    <li>A manipulated image does not necessarily contain false claims.</li>
+                    <li>Missing metadata does not prove that an image is fake.</li>
+                    <li>ELA anomalies do not prove tampering.</li>
+                    <li>An image with no detected anomalies is not guaranteed authentic.</li>
+                  </ul>
+                </div>
+
+              </div>
+            )}
 
           </div>
         </section>
@@ -583,7 +935,7 @@ function App() {
 
           <div className="footer-right">
             <span>
-              PHASE 2 PROJECT DEMO
+              PHASE 3 PROJECT DEMO
             </span>
 
             <span>
