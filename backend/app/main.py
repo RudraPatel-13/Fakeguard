@@ -15,6 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
+import wordnet_service
 from analyzer import analyze_text
 from keyword_loader import KeywordLibraryError, get_config
 
@@ -148,6 +149,8 @@ def keyword_library_info():
             detail="Keyword library is currently unavailable.",
         )
 
+    wn_stats = wordnet_service.cache_stats()
+
     return {
         "version": cfg.version,
         "suspicious_keyword_count": len(cfg.suspicious_keywords.words),
@@ -163,4 +166,9 @@ def keyword_library_info():
             {"label": t.label, "min": t.min_score, "max": t.max_score}
             for t in cfg.thresholds
         ],
+        "wordnet_status": {
+            "available": wn_stats["wordnet_available"],
+            "cached_word_lookups": wn_stats["cached_word_lookups"],
+            "synonym_map_entries": wn_stats["synonym_map_entries"],
+        },
     }

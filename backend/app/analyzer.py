@@ -7,9 +7,20 @@ All keyword lists, scoring weights, category caps, and classification
 thresholds are read from the KeywordConfig returned by
 keyword_loader.get_config().  No scoring data is hardcoded here.
 
+Phase 3 enhancement -- WordNet synonym detection:
+  Before each analysis, analyzer.py asks wordnet_service to ensure its
+  synonym-to-canonical mapping is up to date with the current keyword config.
+  During Rule 1 (suspicious keyword detection), the analyzer performs two passes:
+    Pass 1 -- direct matches: words that appear verbatim in keywords.json.
+    Pass 2 -- WordNet matches: words absent from keywords.json but returned by
+              WordNet as synonyms of a configured concept.
+  Both passes contribute to the same per-canonical-concept count so that a
+  configured term and its discovered synonym are never counted twice.
+
 Changing keywords.json takes effect on the next request without restarting
 the server -- the loader detects the file modification time change and
-reloads transparently.
+reloads transparently.  The WordNet synonym map is also rebuilt whenever the
+canonical keyword set changes.
 
 Raises keyword_loader.KeywordLibraryError (or a subclass) when the library
 cannot be loaded or is currently invalid.  The API layer (main.py) catches
@@ -20,6 +31,7 @@ are never forwarded to the client.
 import logging
 import re
 
+import wordnet_service
 from keyword_loader import KeywordConfig, get_config
 
 logger = logging.getLogger("fakeguard.analyzer")
@@ -55,35 +67,77 @@ def analyze_text(text: str) -> dict:
     # Raises KeywordLibraryError on any failure -- never silently falls back.
     cfg: KeywordConfig = get_config()
 
+    # Ensure the WordNet synonym map is consistent with the current keyword set.
+    # This is a no-op when the keywords have not changed since the last call,
+    # and a no-op when WordNet is unavailable.
+    wordnet_service.update_synonym_map(cfg.suspicious_keywords.words)
+    wn_enabled = wordnet_service.is_available()
+
     score = 0
     indicators: list = []
     lowercase_text = text.lower()
 
     # ------------------------------------------------------------------ #
-    # Rule 1: Suspicious keyword detection                                 #
+    # Rule 1: Suspicious keyword detection (direct + WordNet synonyms)    #
     # ------------------------------------------------------------------ #
     # Extract purely alphabetic tokens.  Hyphenated entries in the library
     # (e.g. "cover-up") will not match this pattern; they are kept for
     # potential future matcher improvements.
     words = re.findall(r"\b[a-zA-Z]+\b", lowercase_text)
+    word_set = set(words)   # unique surface words for detection
 
-    detected_keywords = []
-    for word in words:
+    # detected_canonical_concepts: canonical_keyword -> surface_word that triggered it
+    # Using an ordered dict-of-first-match to keep indicators deterministic.
+    detected_canonical_concepts: dict = {}
+    direct_match_surfaces: list = []    # surface words that are direct keyword matches
+    wordnet_matches: list = []          # (surface_word, canonical_word) tuples
+
+    # Pass 1 -- direct matches (highest priority; checked first so that a
+    # configured keyword is never mistakenly treated as a synonym match even
+    # if it also appears in another keyword's synset).
+    for word in sorted(word_set):          # sorted for deterministic ordering
         if word in cfg.suspicious_keywords.words:
-            if word not in detected_keywords:          # count each distinct keyword once
-                detected_keywords.append(word)
+            if word not in detected_canonical_concepts:
+                detected_canonical_concepts[word] = word
+                direct_match_surfaces.append(word)
 
-    if detected_keywords:
+    # Pass 2 -- WordNet synonym matches (only for words not already matched
+    # as direct keywords, and only when WordNet corpus is available).
+    if wn_enabled:
+        for word in sorted(word_set):
+            if word in cfg.suspicious_keywords.words:
+                continue                   # already handled in Pass 1
+            canonical = wordnet_service.find_canonical(word)
+            if canonical is not None and canonical not in detected_canonical_concepts:
+                detected_canonical_concepts[canonical] = word
+                wordnet_matches.append((word, canonical))
+
+    # Score and build indicators for keyword / synonym findings.
+    if detected_canonical_concepts:
         kw_points = min(
-            len(detected_keywords) * cfg.suspicious_keywords.points_per_distinct_keyword,
+            len(detected_canonical_concepts) * cfg.suspicious_keywords.points_per_distinct_keyword,
             cfg.suspicious_keywords.max_contribution,
         )
         score += kw_points
-        indicators.append(
-            f"Suspicious keywords detected: {', '.join(detected_keywords)}"
-        )
+
+        # Indicator for direct keyword matches.
+        if direct_match_surfaces:
+            indicators.append(
+                f"Suspicious keywords detected: {', '.join(sorted(direct_match_surfaces))}"
+            )
+
+        # Separate, clearly labelled indicator for each WordNet match.
+        for surface_word, canonical in sorted(wordnet_matches):
+            indicators.append(
+                f'WordNet lexical match: "{surface_word}" is associated with '
+                f'the configured concept "{canonical}".'
+            )
+
         logger.debug(
-            "Suspicious keywords: %s  (+%d pts)", detected_keywords, kw_points
+            "Keyword / synonym detection: %d direct, %d WordNet  (+%d pts)",
+            len(direct_match_surfaces),
+            len(wordnet_matches),
+            kw_points,
         )
 
     # ------------------------------------------------------------------ #
@@ -185,4 +239,4 @@ def analyze_text(text: str) -> dict:
         "classification": classification,
         "indicators": indicators,
         "word_count": len(words),
-    }
+    }
