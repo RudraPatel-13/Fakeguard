@@ -1,0 +1,8 @@
+﻿# FakeGuard backend dependencies
+# Runtime
+fastapi==0.141.1
+uvicorn==0.54.0
+pydantic==2.13.5
+
+# Dev / testing only (not needed in production)
+pytest==9.1.1

@@ -1,149 +1,188 @@
+"""
+FakeGuard Phase 3 -- Article Analyzer
+======================================
+Applies the scoring rules from the external keyword library to a news article.
+
+All keyword lists, scoring weights, category caps, and classification
+thresholds are read from the KeywordConfig returned by
+keyword_loader.get_config().  No scoring data is hardcoded here.
+
+Changing keywords.json takes effect on the next request without restarting
+the server -- the loader detects the file modification time change and
+reloads transparently.
+
+Raises keyword_loader.KeywordLibraryError (or a subclass) when the library
+cannot be loaded or is currently invalid.  The API layer (main.py) catches
+this and returns a safe HTTP 503 response.  Stack traces and filesystem paths
+are never forwarded to the client.
+"""
+
+import logging
 import re
 
+from keyword_loader import KeywordConfig, get_config
 
-# Suspicious words for the basic demo
-SUSPICIOUS_KEYWORDS = {
-    "fake",
-    "hoax",
-    "scam",
-    "shocking",
-    "fraud",
-    "secret",
-    "exposed",
-    "urgent",
-    "banned",
-    "conspiracy",
-}
+logger = logging.getLogger("fakeguard.analyzer")
 
 
-# Common clickbait phrases
-CLICKBAIT_PHRASES = [
-    "you won't believe",
-    "you will not believe",
-    "shocking truth",
-    "what happens next",
-    "must see",
-    "click here",
-    "you need to know",
-]
+def analyze_text(text: str) -> dict:
+    """
+    Analyze a news article and return a credibility assessment.
 
+    Parameters
+    ----------
+    text : str
+        Raw article text provided by the client.
 
-def analyze_text(text):
+    Returns
+    -------
+    dict with keys:
+        score          int   credibility indicator score (0 to max_total_score)
+        classification str   label from the matching threshold band
+        indicators     list  human-readable descriptions of detected signals
+        word_count     int   count of alphabetic word tokens found
+
+    Raises
+    ------
+    keyword_loader.KeywordLibraryError
+        Propagated when the keyword library is missing, invalid, or otherwise
+        unavailable.  The caller (main.py) is responsible for catching this
+        and generating a safe error response.
+    """
+    # Fetch the current validated configuration.
+    # Hot-reload happens transparently here: get_config() checks the file's
+    # mtime on every call and reloads if it has changed.
+    # Raises KeywordLibraryError on any failure -- never silently falls back.
+    cfg: KeywordConfig = get_config()
 
     score = 0
-    indicators = []
-
-    # Convert text to lowercase for matching
+    indicators: list = []
     lowercase_text = text.lower()
 
-    # -----------------------------------------
-    # 1. Suspicious keyword detection
-    # -----------------------------------------
-
+    # ------------------------------------------------------------------ #
+    # Rule 1: Suspicious keyword detection                                 #
+    # ------------------------------------------------------------------ #
+    # Extract purely alphabetic tokens.  Hyphenated entries in the library
+    # (e.g. "cover-up") will not match this pattern; they are kept for
+    # potential future matcher improvements.
     words = re.findall(r"\b[a-zA-Z]+\b", lowercase_text)
 
     detected_keywords = []
-
     for word in words:
-        if word in SUSPICIOUS_KEYWORDS:
-            if word not in detected_keywords:
+        if word in cfg.suspicious_keywords.words:
+            if word not in detected_keywords:          # count each distinct keyword once
                 detected_keywords.append(word)
 
     if detected_keywords:
-        points = min(len(detected_keywords) * 10, 30)
-        score += points
-
+        kw_points = min(
+            len(detected_keywords) * cfg.suspicious_keywords.points_per_distinct_keyword,
+            cfg.suspicious_keywords.max_contribution,
+        )
+        score += kw_points
         indicators.append(
             f"Suspicious keywords detected: {', '.join(detected_keywords)}"
         )
+        logger.debug(
+            "Suspicious keywords: %s  (+%d pts)", detected_keywords, kw_points
+        )
 
-    # -----------------------------------------
-    # 2. Clickbait phrase detection
-    # -----------------------------------------
-
+    # ------------------------------------------------------------------ #
+    # Rule 2: Clickbait phrase detection                                   #
+    # ------------------------------------------------------------------ #
     detected_phrases = []
-
-    for phrase in CLICKBAIT_PHRASES:
+    for phrase in cfg.clickbait_phrases.phrases:
         if phrase in lowercase_text:
             detected_phrases.append(phrase)
 
     if detected_phrases:
-        points = min(len(detected_phrases) * 15, 30)
-        score += points
-
+        cb_points = min(
+            len(detected_phrases) * cfg.clickbait_phrases.points_per_phrase,
+            cfg.clickbait_phrases.max_contribution,
+        )
+        score += cb_points
         indicators.append(
             f"Clickbait phrases detected: {', '.join(detected_phrases)}"
         )
+        logger.debug(
+            "Clickbait phrases: %s  (+%d pts)", detected_phrases, cb_points
+        )
 
-    # -----------------------------------------
-    # 3. Excessive capitalization
-    # -----------------------------------------
-
-    letters = [character for character in text if character.isalpha()]
-    uppercase_letters = [
-        character for character in letters if character.isupper()
-    ]
+    # ------------------------------------------------------------------ #
+    # Rule 3: Excessive capitalisation                                     #
+    # ------------------------------------------------------------------ #
+    letters = [ch for ch in text if ch.isalpha()]
+    uppercase_letters = [ch for ch in letters if ch.isupper()]
 
     if letters:
         uppercase_ratio = len(uppercase_letters) / len(letters)
-
-        if uppercase_ratio > 0.50:
-            score += 10
-
-            indicators.append(
-                "Excessive capitalization detected."
+        if uppercase_ratio > cfg.text_patterns.caps_ratio_threshold:
+            score += cfg.text_patterns.caps_points
+            indicators.append("Excessive capitalization detected.")
+            logger.debug(
+                "Caps ratio %.2f > %.2f  (+%d pts)",
+                uppercase_ratio,
+                cfg.text_patterns.caps_ratio_threshold,
+                cfg.text_patterns.caps_points,
             )
 
-    # -----------------------------------------
-    # 4. Excessive punctuation
-    # -----------------------------------------
-
+    # ------------------------------------------------------------------ #
+    # Rule 4: Excessive exclamation marks                                  #
+    # ------------------------------------------------------------------ #
     exclamation_count = text.count("!")
+    if exclamation_count >= cfg.text_patterns.exclamation_min_count:
+        score += cfg.text_patterns.exclamation_points
+        indicators.append("Excessive exclamation marks detected.")
+        logger.debug(
+            "Exclamation count %d >= %d  (+%d pts)",
+            exclamation_count,
+            cfg.text_patterns.exclamation_min_count,
+            cfg.text_patterns.exclamation_points,
+        )
+
+    # ------------------------------------------------------------------ #
+    # Rule 5: Excessive question marks                                     #
+    # ------------------------------------------------------------------ #
     question_count = text.count("?")
-
-    if exclamation_count >= 3:
-        score += 10
-
-        indicators.append(
-            "Excessive exclamation marks detected."
+    if question_count >= cfg.text_patterns.question_min_count:
+        score += cfg.text_patterns.question_points
+        indicators.append("Excessive question marks detected.")
+        logger.debug(
+            "Question count %d >= %d  (+%d pts)",
+            question_count,
+            cfg.text_patterns.question_min_count,
+            cfg.text_patterns.question_points,
         )
 
-    if question_count >= 3:
-        score += 5
+    # ------------------------------------------------------------------ #
+    # Cap total score at the configured maximum                            #
+    # ------------------------------------------------------------------ #
+    score = min(score, cfg.max_total_score)
 
-        indicators.append(
-            "Excessive question marks detected."
-        )
+    # ------------------------------------------------------------------ #
+    # Classify using thresholds from the keyword config                   #
+    # ------------------------------------------------------------------ #
+    # The loader guarantees thresholds are contiguous and cover
+    # [0, max_total_score] exactly, so exactly one band will always match.
+    classification = cfg.thresholds[-1].label      # safe fallback: last band
+    for threshold in cfg.thresholds:
+        if threshold.min_score <= score <= threshold.max_score:
+            classification = threshold.label
+            break
 
-    # -----------------------------------------
-    # Keep score between 0 and 100
-    # -----------------------------------------
-
-    score = min(score, 100)
-
-    # -----------------------------------------
-    # Classification
-    # -----------------------------------------
-
-    if score <= 30:
-        classification = "Credible"
-    elif score <= 60:
-        classification = "Suspicious"
-    else:
-        classification = "Likely Fake"
-
-    # -----------------------------------------
-    # No indicators
-    # -----------------------------------------
-
+    # ------------------------------------------------------------------ #
+    # No signals detected                                                  #
+    # ------------------------------------------------------------------ #
     if not indicators:
-        indicators.append(
-            "No major suspicious indicators detected."
-        )
+        indicators.append("No major suspicious indicators detected.")
+
+    logger.debug(
+        "Result: score=%d  classification=%r  word_count=%d",
+        score, classification, len(words),
+    )
 
     return {
         "score": score,
         "classification": classification,
         "indicators": indicators,
         "word_count": len(words),
-    }
+    }
