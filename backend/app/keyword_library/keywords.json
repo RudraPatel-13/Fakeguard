@@ -1,0 +1,94 @@
+{
+  "_comment": "FakeGuard keyword library — single source of truth for all scoring rules. Edit this file to update keywords and weights without touching analyzer code.",
+  "version": "1.0.0",
+  "last_updated": "2026-10-15",
+
+  "suspicious_keywords": {
+    "_comment": "Matched as whole words (case-insensitive). Only distinct keywords are counted — repeated occurrences of the same word count as one.",
+    "words": [
+      "fake",
+      "hoax",
+      "scam",
+      "shocking",
+      "fraud",
+      "secret",
+      "exposed",
+      "urgent",
+      "banned",
+      "conspiracy",
+      "miracle",
+      "bombshell",
+      "censored",
+      "cover-up",
+      "rigged",
+      "suppressed",
+      "whistleblower",
+      "propaganda",
+      "manipulation",
+      "bribery"
+    ],
+    "scoring": {
+      "points_per_distinct_keyword": 10,
+      "max_contribution": 30
+    }
+  },
+
+  "clickbait_phrases": {
+    "_comment": "Matched as substrings (case-insensitive). Each distinct phrase found contributes points up to the category cap.",
+    "phrases": [
+      "you won't believe",
+      "you will not believe",
+      "shocking truth",
+      "what happens next",
+      "must see",
+      "click here",
+      "you need to know",
+      "they don't want you to know",
+      "the truth about",
+      "doctors hate",
+      "one weird trick",
+      "mind blowing",
+      "going viral",
+      "share before it's deleted",
+      "wake up"
+    ],
+    "scoring": {
+      "points_per_phrase": 15,
+      "max_contribution": 30
+    }
+  },
+
+  "text_pattern_rules": {
+    "excessive_capitalization": {
+      "_comment": "Fires when the ratio of uppercase letters to total letters exceeds the threshold.",
+      "uppercase_ratio_threshold": 0.50,
+      "min_count": null,
+      "points": 10
+    },
+    "excessive_exclamation_marks": {
+      "_comment": "Fires when the total count of '!' in the article meets or exceeds the threshold.",
+      "uppercase_ratio_threshold": null,
+      "min_count": 3,
+      "points": 10
+    },
+    "excessive_question_marks": {
+      "_comment": "Fires when the total count of '?' in the article meets or exceeds the threshold.",
+      "uppercase_ratio_threshold": null,
+      "min_count": 3,
+      "points": 5
+    }
+  },
+
+  "scoring": {
+    "max_total_score": 100
+  },
+
+  "classification": {
+    "_comment": "Thresholds are inclusive upper bounds. A score of exactly 30 is Credible; a score of exactly 60 is Suspicious.",
+    "thresholds": [
+      { "label": "Credible",     "min": 0,  "max": 30  },
+      { "label": "Suspicious",   "min": 31, "max": 60  },
+      { "label": "Likely Fake",  "min": 61, "max": 100 }
+    ]
+  }
+}
