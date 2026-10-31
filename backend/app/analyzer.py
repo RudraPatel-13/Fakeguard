@@ -75,6 +75,8 @@ def analyze_text(text: str) -> dict:
 
     score = 0
     indicators: list = []
+    breakdown = {"keywords": 0, "clickbait": 0, "caps": 0, "exclamation": 0, "question": 0}
+    detected_phrases: list = []
     lowercase_text = text.lower()
 
     # ------------------------------------------------------------------ #
@@ -119,6 +121,7 @@ def analyze_text(text: str) -> dict:
             cfg.suspicious_keywords.max_contribution,
         )
         score += kw_points
+        breakdown["keywords"] = kw_points
 
         # Indicator for direct keyword matches.
         if direct_match_surfaces:
@@ -143,7 +146,6 @@ def analyze_text(text: str) -> dict:
     # ------------------------------------------------------------------ #
     # Rule 2: Clickbait phrase detection                                   #
     # ------------------------------------------------------------------ #
-    detected_phrases = []
     for phrase in cfg.clickbait_phrases.phrases:
         if phrase in lowercase_text:
             detected_phrases.append(phrase)
@@ -154,6 +156,7 @@ def analyze_text(text: str) -> dict:
             cfg.clickbait_phrases.max_contribution,
         )
         score += cb_points
+        breakdown["clickbait"] = cb_points
         indicators.append(
             f"Clickbait phrases detected: {', '.join(detected_phrases)}"
         )
@@ -171,6 +174,7 @@ def analyze_text(text: str) -> dict:
         uppercase_ratio = len(uppercase_letters) / len(letters)
         if uppercase_ratio > cfg.text_patterns.caps_ratio_threshold:
             score += cfg.text_patterns.caps_points
+            breakdown["caps"] = cfg.text_patterns.caps_points
             indicators.append("Excessive capitalization detected.")
             logger.debug(
                 "Caps ratio %.2f > %.2f  (+%d pts)",
@@ -185,6 +189,7 @@ def analyze_text(text: str) -> dict:
     exclamation_count = text.count("!")
     if exclamation_count >= cfg.text_patterns.exclamation_min_count:
         score += cfg.text_patterns.exclamation_points
+        breakdown["exclamation"] = cfg.text_patterns.exclamation_points
         indicators.append("Excessive exclamation marks detected.")
         logger.debug(
             "Exclamation count %d >= %d  (+%d pts)",
@@ -199,6 +204,7 @@ def analyze_text(text: str) -> dict:
     question_count = text.count("?")
     if question_count >= cfg.text_patterns.question_min_count:
         score += cfg.text_patterns.question_points
+        breakdown["question"] = cfg.text_patterns.question_points
         indicators.append("Excessive question marks detected.")
         logger.debug(
             "Question count %d >= %d  (+%d pts)",
@@ -239,4 +245,15 @@ def analyze_text(text: str) -> dict:
         "classification": classification,
         "indicators": indicators,
         "word_count": len(words),
+        # Additive Phase 4 fields (legacy keys above are unchanged).
+        "breakdown": breakdown,
+        "max_score": cfg.max_total_score,
+        "caps": {"suspicious_max": cfg.suspicious_keywords.max_contribution,
+                 "clickbait_max": cfg.clickbait_phrases.max_contribution,
+                 "text_pattern_max": cfg.text_patterns.caps_points + cfg.text_patterns.exclamation_points + cfg.text_patterns.question_points},
+        "matched_terms": {
+            "keywords": sorted(direct_match_surfaces),
+            "wordnet": sorted(w for w, _ in wordnet_matches),
+            "clickbait": list(detected_phrases),
+        },
     }

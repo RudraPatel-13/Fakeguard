@@ -7,6 +7,12 @@ nltk==3.10.3
 Pillow==12.3.0
 pytesseract==0.3.13
 python-multipart==0.0.20
+# Phase 4
+numpy>=2.0
+scikit-learn>=1.5
+joblib>=1.4
+httpx>=0.27
+beautifulsoup4>=4.12
 
 # Dev / testing only (not needed in production)
 pytest==9.1.1
@@ -14,3 +20,8 @@ pytest==9.1.1
 # NOTE: Tesseract OCR binary must be installed separately.
 # Windows: https://github.com/UB-Mannheim/tesseract/wiki
 # After install, ensure tesseract.exe is on PATH or set env var TESSERACT_CMD.
+#
+# Optional environment variables:
+#   FAKEGUARD_ONLINE=1            enable live fact-check lookups and URL fetching
+#   GOOGLE_FACTCHECK_API_KEY=...  enable Google Fact Check Tools API (online mode)
+#   FAKEGUARD_MODEL_PATH=...      override the ML model artifact location

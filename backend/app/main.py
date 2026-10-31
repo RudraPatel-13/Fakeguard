@@ -1,5 +1,5 @@
 """
-FakeGuard Phase 3 -- FastAPI Application
+FakeGuard Phase 4 -- FastAPI Application
 ==========================================
 HTTP routing, CORS, structured logging, and safe translation of keyword-library
 failures into HTTP 503 responses.
@@ -9,12 +9,18 @@ React frontend requires no modifications.
 """
 
 import logging
+from typing import Optional
 
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
+import fusion as fusion_mod
+import ml_service
+import verifier_service
+import web_search_service
 import wordnet_service
 from analyzer import analyze_text
 from image_analyzer import analyze_image
@@ -35,13 +41,13 @@ logger = logging.getLogger("fakeguard.api")
 # ---------------------------------------------------------------------------
 app = FastAPI(
     title="FakeGuard API",
-    description="Rule-Based News Credibility Analyzer",
-    version="3.0.0",
+    description="Hybrid (rules + ML) News Credibility & Image Forensics Platform",
+    version="4.0.0",
 )
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -85,6 +91,12 @@ async def keyword_library_error_handler(
 
 class ArticleRequest(BaseModel):
     text: str
+    url: Optional[str] = None      # optional source URL for domain-trust scoring
+
+
+class VerifyRequest(BaseModel):
+    text: Optional[str] = None
+    url: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -105,7 +117,7 @@ def health_check():
 
 
 @app.post("/analyze")
-def analyze_article(article: ArticleRequest):
+def analyze_article(article: ArticleRequest, verify_web: bool = False):
     """
     Analyze the credibility of a news article.
 
@@ -122,6 +134,21 @@ def analyze_article(article: ArticleRequest):
         result["score"],
         result["classification"],
     )
+
+    # Phase 4 additive signals.  Failures here never break the legacy payload.
+    ml = fact = domain = fusion = web = None
+    claims: list = []
+    try:
+        ml = ml_service.predict(article.text)
+        claims = verifier_service.extract_claims(article.text)
+        fact = verifier_service.check_claims(claims)
+        domain = verifier_service.assess_domain(article.url) if article.url else None
+        if verify_web:
+            web = web_search_service.verify_web(article.text)
+        fusion = fusion_mod.fuse(result, ml, fact_check=fact, domain=domain, web=web)
+    except Exception as exc:
+        logger.error("Phase 4 enrichment failed: %s", exc)
+
     return {
         "message": "Article analyzed successfully",
         "text_length": len(article.text),
@@ -129,11 +156,62 @@ def analyze_article(article: ArticleRequest):
         "classification": result["classification"],
         "indicators": result["indicators"],
         "word_count": result["word_count"],
+        "breakdown": result["breakdown"],
+        "matched_terms": result["matched_terms"],
+        "ml": ml,
+        "claims": claims,
+        "fact_check": fact,
+        "domain": domain,
+        "web": web,
+        "fusion": fusion,
     }
 
 
+@app.post("/verify-web")
+async def verify_web_endpoint(req: VerifyRequest):
+    """
+    Live internet cross-check: are the claims reported by reputable outlets or
+    addressed by fact-checkers?  Falls back to offline simulation mode if the
+    network is unreachable.  Body: {text?, url?}; a URL contributes its domain
+    assessment.
+    """
+    if not (req.text and req.text.strip()):
+        raise HTTPException(status_code=422, detail="Provide 'text' (headline or claim) to verify.")
+    web = await run_in_threadpool(web_search_service.verify_web, req.text)
+    return {"web": web, "domain": verifier_service.assess_domain(req.url) if req.url else None}
+
+
+@app.post("/verify-claim")
+def verify_claim(req: VerifyRequest):
+    """
+    Extract claims from text and/or assess a URL's publisher, then cross-check
+    against fact-check sources (offline registry by default; live sources when
+    FAKEGUARD_ONLINE=1).  At least one of text/url is required.
+    """
+    if not (req.text and req.text.strip()) and not (req.url and req.url.strip()):
+        raise HTTPException(status_code=422, detail="Provide 'text' and/or 'url'.")
+    logger.info("POST /verify-claim  text=%s url=%s", bool(req.text), bool(req.url))
+    return verifier_service.verify(text=req.text, url=req.url)
+
+
+@app.get("/model-info")
+def model_info():
+    """Metadata about the ML credibility classifier and runtime mode."""
+    info = ml_service.model_info()
+    info["verification_mode"] = "online" if verifier_service.online_enabled() else "offline"
+    info["fusion"] = {
+        "w_rules": fusion_mod.W_RULES, "w_ml": fusion_mod.W_ML,
+        "with_web": {"rules": fusion_mod.W3_RULES, "ml": fusion_mod.W3_ML, "web": fusion_mod.W3_WEB},
+        "web_search": "disabled" if not web_search_service.web_enabled() else "live",
+        "forensics_max_penalty": fusion_mod.FORENSICS_MAX_PENALTY,
+        "claim_contradicted_penalty": fusion_mod.CLAIM_CONTRADICTED_PENALTY,
+        "source_max_penalty": fusion_mod.SOURCE_MAX_PENALTY,
+    }
+    return info
+
+
 @app.post("/analyze-image")
-async def analyze_image_endpoint(file: UploadFile = File(...)):
+async def analyze_image_endpoint(file: UploadFile = File(...), verify_web: bool = True):
     """
     Analyse an uploaded image.
 
@@ -163,7 +241,7 @@ async def analyze_image_endpoint(file: UploadFile = File(...)):
         logger.error("File read error: %s", exc)
         raise HTTPException(status_code=400, detail="Could not read uploaded file.")
 
-    result = analyze_image(file_bytes, filename)    # never raises
+    result = await run_in_threadpool(analyze_image, file_bytes, filename, verify_web)    # never raises
 
     logger.info(
         "Image analysis complete: status=%r  ocr_status=%r",
@@ -214,3 +292,37 @@ def keyword_library_info():
             "synonym_map_entries": wn_stats["synonym_map_entries"],
         },
     }
+
+
+@app.get("/keywords/rules")
+def keyword_rules():
+    """Loaded rule lists for the Rule Studio (read-only).  /keywords stays metadata-only."""
+    cfg = get_config()
+    return {
+        "version": cfg.version,
+        "suspicious_keywords": sorted(cfg.suspicious_keywords.words),
+        "clickbait_phrases": list(cfg.clickbait_phrases.phrases),
+        "text_patterns": {
+            "caps_ratio_threshold": cfg.text_patterns.caps_ratio_threshold,
+            "caps_points": cfg.text_patterns.caps_points,
+            "exclamation_min_count": cfg.text_patterns.exclamation_min_count,
+            "exclamation_points": cfg.text_patterns.exclamation_points,
+            "question_min_count": cfg.text_patterns.question_min_count,
+            "question_points": cfg.text_patterns.question_points,
+        },
+    }
+
+
+_last_reload_version: Optional[str] = None
+
+
+@app.post("/keywords/reload")
+def keyword_reload():
+    """Force a modification-time check now (the library also hot-reloads on every request)."""
+    global _last_reload_version
+    cfg = get_config()
+    changed = _last_reload_version is not None and cfg.version != _last_reload_version
+    _last_reload_version = cfg.version
+    return {"version": cfg.version, "changed": changed,
+            "suspicious_keyword_count": len(cfg.suspicious_keywords.words),
+            "clickbait_phrase_count": len(cfg.clickbait_phrases.phrases)}

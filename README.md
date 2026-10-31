@@ -14,6 +14,7 @@ a configurable, rule-based scoring engine.
 | **Phase 3a** | Dynamic keyword library — external JSON config with hot-reload |
 | **Phase 3b** | WordNet synonym detection — lexical expansion via NLTK |
 | **Phase 3c** | Image forensics — OCR text extraction, metadata inspection, Error Level Analysis |
+| **Phase 4** | Hybrid rules + ML scoring, OCR→credibility dual verdict, claim verification, cyber-intelligence dashboard — see [PHASE4_DOCUMENTATION.md](PHASE4_DOCUMENTATION.md) |
 
 ---
 
@@ -89,6 +90,8 @@ The frontend is available at `http://localhost:5173`.
 ---
 
 ## API Reference
+
+> **Phase 4 additions** (all additive): `POST /verify-web` (live news/fact-check search), `POST /verify-claim`, `GET /model-info`, `GET /keywords/rules`, `POST /keywords/reload`; `/analyze` accepts optional `url` and `?verify_web=true` and returns `ml`, `fusion`, `fact_check`, `domain`; `/analyze-image` returns `dual_verdict`, `forensics`, `keyword_overlays`. Details in [PHASE4_DOCUMENTATION.md](PHASE4_DOCUMENTATION.md). Set `FAKEGUARD_ONLINE=1` to enable live fact-check lookups.
 
 ### `GET /health`
 Returns `{"status": "healthy"}`.

@@ -50,3 +50,6 @@ dist/
 
 # OS files
 Thumbs.db
+
+# ML model artifact (auto-generated on first use)
+backend/app/models/*.joblib

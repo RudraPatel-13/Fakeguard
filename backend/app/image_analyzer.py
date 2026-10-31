@@ -137,6 +137,9 @@ class OcrResult:
     text: str = ""
     character_count: int = 0
     warning: Optional[str] = None
+    words: list = field(default_factory=list)      # [{text, conf, x, y, w, h}] normalised 0-1 boxes
+    mean_confidence: Optional[float] = None
+    preprocessing: list = field(default_factory=list)
 
 
 @dataclass
@@ -158,6 +161,9 @@ class ElaResult:
     observations: list = field(default_factory=list)
     ela_image: Optional[str] = None     # data:image/png;base64,...
     limitation_note: str = ""
+    max_diff: int = 0
+    mean_diff: float = 0.0
+    hot_fraction: float = 0.0           # share of pixels with diff >= 20 (unamplified)
 
 
 # ---------------------------------------------------------------------------
@@ -212,6 +218,58 @@ def validate_and_decode_image(
 # Layer 1b: OCR text extraction
 # ---------------------------------------------------------------------------
 
+def preprocess_for_ocr(image):
+    """
+    Pillow/numpy-only OCR preprocessing (no OpenCV dependency):
+      grayscale -> upscale small images -> median denoise (edge-preserving
+      stand-in for a bilateral filter) -> autocontrast -> adaptive (local-mean)
+      threshold.  Returns (processed PIL image, list of applied steps, scale).
+    """
+    from PIL import Image, ImageFilter, ImageOps
+    import numpy as np
+
+    steps = ["grayscale"]
+    gray = ImageOps.grayscale(image.convert("RGB"))
+    scale = 1.0
+    if max(gray.size) < 1200:
+        scale = min(2.0, 1200 / max(gray.size))
+        gray = gray.resize((int(gray.width * scale), int(gray.height * scale)), Image.LANCZOS)
+        steps.append(f"upscale x{scale:.1f}")
+    gray = gray.filter(ImageFilter.MedianFilter(3))
+    steps.append("median denoise")
+    gray = ImageOps.autocontrast(gray, cutoff=1)
+    steps.append("autocontrast")
+    radius = max(8, min(gray.size) // 16)
+    local_mean = np.asarray(gray.filter(ImageFilter.BoxBlur(radius)), dtype=np.float32)
+    arr = np.asarray(gray, dtype=np.float32)
+    binary = np.where(arr > local_mean - 10, 255, 0).astype(np.uint8)
+    steps.append("adaptive threshold")
+    return Image.fromarray(binary, mode="L"), steps, scale
+
+
+def _ocr_words(img, scale: float, orig_size: tuple) -> tuple:
+    """Run image_to_data; return (words with normalised boxes, mean confidence)."""
+    import pytesseract
+    data = pytesseract.image_to_data(img, config="--psm 3", output_type=pytesseract.Output.DICT)
+    pw, ph = img.size
+    words, confs = [], []
+    for i, txt in enumerate(data.get("text", [])):
+        txt = (txt or "").strip()
+        try:
+            conf = float(data["conf"][i])
+        except (ValueError, KeyError, IndexError):
+            continue
+        if not txt or conf < 0:
+            continue
+        words.append({
+            "text": txt, "conf": round(conf, 1),
+            "x": round(data["left"][i] / pw, 5), "y": round(data["top"][i] / ph, 5),
+            "w": round(data["width"][i] / pw, 5), "h": round(data["height"][i] / ph, 5),
+        })
+        confs.append(conf)
+    return words, (sum(confs) / len(confs) if confs else None)
+
+
 def extract_ocr_text(image) -> OcrResult:
     """
     Extract text from a PIL Image using Tesseract OCR.
@@ -239,6 +297,21 @@ def extract_ocr_text(image) -> OcrResult:
         raw_text = pytesseract.image_to_string(ocr_image, config="--psm 3")
         text = raw_text.strip()
 
+        # Phase 4: word boxes + confidence, comparing raw vs preprocessed input.
+        # Best-effort: any failure here leaves the plain-text result intact.
+        words, mean_conf, applied = [], None, []
+        try:
+            w_raw, c_raw = _ocr_words(ocr_image, 1.0, image.size)
+            words, mean_conf = w_raw, c_raw
+            pre, steps, scale = preprocess_for_ocr(image)
+            w_pre, c_pre = _ocr_words(pre, scale, image.size)
+            if c_pre is not None and (c_raw is None or c_pre > c_raw + 3):
+                alt = pytesseract.image_to_string(pre, config="--psm 3").strip()
+                if alt:
+                    text, words, mean_conf, applied = alt, w_pre, c_pre, steps
+        except Exception as exc:
+            logger.debug("OCR word-level pass skipped: %s", exc)
+
         if not text:
             return OcrResult(
                 status="no_text",
@@ -256,6 +329,9 @@ def extract_ocr_text(image) -> OcrResult:
                 "OCR output may contain recognition errors. "
                 "Review extracted text carefully before relying on it."
             ),
+            words=words,
+            mean_confidence=round(mean_conf, 1) if mean_conf is not None else None,
+            preprocessing=applied,
         )
 
     except Exception as exc:
@@ -433,6 +509,13 @@ def perform_ela(image) -> ElaResult:
         diff = ImageChops.difference(rgb, recomp)
         extrema = diff.getextrema()
         max_diff = max(ch[1] for ch in extrema) if extrema else 0
+        try:
+            import numpy as _np
+            _d = _np.asarray(diff, dtype=_np.float32).max(axis=2)
+            mean_diff = float(_d.mean())
+            hot_fraction = float((_d >= 20).mean())
+        except Exception:
+            mean_diff, hot_fraction = 0.0, 0.0
 
         observations: list = []
 
@@ -488,6 +571,9 @@ def perform_ela(image) -> ElaResult:
             observations=observations,
             ela_image=ela_b64,
             limitation_note=_ELA_LIMITATION,
+            max_diff=int(max_diff),
+            mean_diff=round(mean_diff, 3),
+            hot_fraction=round(hot_fraction, 5),
         )
 
     except Exception as exc:
@@ -499,13 +585,110 @@ def perform_ela(image) -> ElaResult:
             ),
             limitation_note=_ELA_LIMITATION,
         )
+# ---------------------------------------------------------------------------
+# Phase 4: forensics risk, keyword overlay
+# ---------------------------------------------------------------------------
+
+_EDITOR_HINTS = ("photoshop", "gimp", "lightroom", "affinity", "pixlr", "canva", "snapseed", "paint.net")
+
+
+def compute_forensics_risk(meta: MetadataResult, ela: ElaResult, source_format: Optional[str]) -> dict:
+    """
+    Heuristic 0-100 visual-integrity risk.  An indicator for triage,
+    NOT proof of tampering (see the ELA limitation note).
+    """
+    factors, risk = [], 0.0
+
+    if ela.performed and ela.max_diff:
+        weight = 1.0 if source_format == "JPEG" else 0.5
+        ela_part = 0.0
+        if ela.max_diff >= 25:
+            ela_part += 15
+        elif ela.max_diff >= 8:
+            ela_part += 5
+        ela_part += min(35.0, ela.hot_fraction * 400)      # 8.75% hot pixels saturates
+        ela_part *= weight
+        if ela_part >= 1:
+            risk += ela_part
+            factors.append({
+                "signal": "ELA discrepancy", "points": round(ela_part, 1),
+                "detail": f"max diff {ela.max_diff}, {ela.hot_fraction * 100:.2f}% hot pixels"
+                          + ("" if weight == 1.0 else " (halved: non-JPEG source)"),
+            })
+    elif not ela.performed:
+        factors.append({"signal": "ELA not performed", "points": 0, "detail": ela.reason_skipped or ""})
+
+    sw = (meta.exif_fields.get("Software") or "").lower()
+    if any(h in sw for h in _EDITOR_HINTS):
+        risk += 15
+        factors.append({"signal": "Editing software in EXIF", "points": 15,
+                        "detail": meta.exif_fields["Software"]})
+    dt, dto = meta.exif_fields.get("DateTime"), meta.exif_fields.get("DateTimeOriginal")
+    if dt and dto and dt != dto:
+        risk += 12
+        factors.append({"signal": "Modified after capture", "points": 12,
+                        "detail": f"DateTime {dt} differs from DateTimeOriginal {dto}"})
+    if not meta.exif_available:
+        risk += 5
+        factors.append({"signal": "No EXIF metadata", "points": 5,
+                        "detail": "Weak signal: common for social-media re-uploads"})
+    if meta.width < 200 or meta.height < 200:
+        factors.append({"signal": "Low resolution", "points": 0,
+                        "detail": "Reduces reliability of ELA and OCR"})
+
+    risk = max(0.0, min(100.0, risk))
+    level = "Low" if risk < 20 else "Moderate" if risk < 45 else "Elevated"
+    return {
+        "risk_score": round(risk, 1), "level": level, "factors": factors,
+        "disclaimer": "Heuristic indicator only; not proof of manipulation or authenticity.",
+    }
+
+
+def build_keyword_overlays(words: list, matched_terms: dict) -> list:
+    """Map analyzer-detected keywords/phrases onto OCR word boxes (normalised 0-1 coordinates)."""
+    import re as _re
+
+    def norm(w):
+        return _re.sub(r"[^a-z0-9'-]", "", w.lower())
+
+    singles = {}
+    for cat, key in (("keyword", "keywords"), ("synonym", "wordnet")):
+        for t in matched_terms.get(key, []):
+            singles[t.lower()] = cat
+    overlays, used = [], set()
+    norms = [norm(w["text"]) for w in words]
+
+    for phrase in matched_terms.get("clickbait", []):
+        toks = [norm(t) for t in phrase.split()]
+        n = len(toks)
+        for i in range(len(words) - n + 1):
+            if norms[i:i + n] == toks and not used.intersection(range(i, i + n)):
+                seg = words[i:i + n]
+                x0 = min(w["x"] for w in seg)
+                y0 = min(w["y"] for w in seg)
+                x1 = max(w["x"] + w["w"] for w in seg)
+                y1 = max(w["y"] + w["h"] for w in seg)
+                overlays.append({"text": phrase, "category": "clickbait",
+                                 "x": round(x0, 5), "y": round(y0, 5),
+                                 "w": round(x1 - x0, 5), "h": round(y1 - y0, 5)})
+                used.update(range(i, i + n))
+    for i, w in enumerate(words):
+        if i in used:
+            continue
+        cat = singles.get(norms[i])
+        if cat:
+            overlays.append({"text": w["text"], "category": cat,
+                             "x": w["x"], "y": w["y"], "w": w["w"], "h": w["h"]})
+    return overlays
+
+
 
 
 # ---------------------------------------------------------------------------
 # Full pipeline
 # ---------------------------------------------------------------------------
 
-def analyze_image(file_bytes: bytes, filename: str) -> dict:
+def analyze_image(file_bytes: bytes, filename: str, verify_web: bool = True) -> dict:
     """
     Full image analysis pipeline.
 
@@ -530,6 +713,12 @@ def analyze_image(file_bytes: bytes, filename: str) -> dict:
             "text_analysis": None,
             "metadata": None,
             "ela": None,
+            "forensics": None,
+            "keyword_overlays": [],
+            "ml": None,
+            "fusion": None,
+            "web": None,
+            "dual_verdict": None,
         }
 
     # Step 2: OCR
@@ -551,6 +740,41 @@ def analyze_image(file_bytes: bytes, filename: str) -> dict:
     # Step 5: ELA
     ela = perform_ela(image)
 
+    forensics = compute_forensics_risk(meta, ela, image.format)
+
+    overlays, ml, fusion, web = [], None, None, None
+    ta_ok = bool(text_analysis) and "error" not in text_analysis
+    if ta_ok:
+        overlays = build_keyword_overlays(ocr.words, text_analysis.get("matched_terms", {}))
+        try:
+            import fusion as _fusion
+            import ml_service
+            ml = ml_service.predict(ocr.text)
+            if verify_web:
+                import web_search_service
+                web = web_search_service.verify_web(ocr.text)
+            fusion = _fusion.fuse(text_analysis, ml, forensics_risk=forensics["risk_score"], web=web)
+        except Exception as exc:
+            logger.error("ML/fusion step failed: %s", exc)
+
+    dual_verdict = {
+        "visual_integrity": {
+            "risk_score": forensics["risk_score"],
+            "level": forensics["level"],
+            "summary": f"{forensics['level']} visual-integrity risk ({forensics['risk_score']}/100)",
+        },
+        "content_credibility": (
+            {
+                "trust_score": fusion["final_score"],
+                "band": fusion["band"],
+                "rule_classification": text_analysis["classification"],
+                "summary": (f"{fusion['band']} ({fusion['final_score']}/100); "
+                            f"{text_analysis['classification']} by rules"),
+            }
+            if fusion else None
+        ),
+    }
+
     return {
         "status": "ok",
         "error": None,
@@ -560,6 +784,9 @@ def analyze_image(file_bytes: bytes, filename: str) -> dict:
             "text": ocr.text,
             "character_count": ocr.character_count,
             "warning": ocr.warning,
+            "mean_confidence": ocr.mean_confidence,
+            "words": ocr.words,
+            "preprocessing": ocr.preprocessing,
         },
         "text_analysis": text_analysis,
         "metadata": {
@@ -578,5 +805,14 @@ def analyze_image(file_bytes: bytes, filename: str) -> dict:
             "observations": ela.observations,
             "ela_image": ela.ela_image,
             "limitation_note": ela.limitation_note,
+            "max_diff": ela.max_diff,
+            "mean_diff": ela.mean_diff,
+            "hot_fraction": ela.hot_fraction,
         },
+        "forensics": forensics,
+        "keyword_overlays": overlays,
+        "ml": ml,
+        "web": web,
+        "fusion": fusion,
+        "dual_verdict": dual_verdict,
     }
