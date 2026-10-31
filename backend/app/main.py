@@ -25,6 +25,8 @@ import wordnet_service
 from analyzer import analyze_text
 from image_analyzer import analyze_image
 from keyword_loader import KeywordLibraryError, get_config
+import auth_routes
+from database import init_db
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -57,6 +59,10 @@ app.add_middleware(
 # ---------------------------------------------------------------------------
 # Global safe error handler for keyword library failures
 # ---------------------------------------------------------------------------
+
+init_db()
+app.include_router(auth_routes.router)
+
 
 @app.exception_handler(KeywordLibraryError)
 async def keyword_library_error_handler(

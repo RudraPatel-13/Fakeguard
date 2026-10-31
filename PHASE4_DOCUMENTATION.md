@@ -109,3 +109,12 @@ Not built: a synonym-threshold control (WordNet matching has no tunable threshol
 ## 8. Tests
 
 `pytest` from the repository root: 412 passed, 1 skipped (the real-Tesseract integration test, skipped when the binary is absent). New: `test_ml_service.py`, `test_verifier_service.py`, `test_fusion.py`, `test_phase4.py`, `test_web_search.py` (canned RSS feeds: corroboration, debunks, disputing outlets, fallback, cache, fusion, endpoints, OCR to web). `conftest.py` isolates the model artifact and blocks real network access in every test. `npm run lint` and `npm run build` pass. The UI was not exercised in a browser during development (no browser available), so a manual smoke test is recommended.
+
+## 9. Accounts (added after Phase 4)
+
+* **Backend** (`database.py`, `auth_models.py`, `auth_service.py`, `auth_routes.py`): SQLite via SQLAlchemy (`backend/app/data/fakeguard.db`, git-ignored), bcrypt password hashes, HS256 JWTs valid 7 days. The signing secret is `FAKEGUARD_JWT_SECRET`, or a random one generated once into `backend/app/data/jwt_secret`.
+* **Endpoints**: `POST /auth/register`, `/auth/login`, `/auth/token` (OAuth2 form, for Swagger), `/auth/demo`; `GET /auth/me`, `/auth/history`, `/auth/stats`; `POST /auth/save-scan`. Failed sign-ins are throttled (8 per email+client per 10 min, in-memory). Passwords are 6-72 bytes.
+* **Demo login** signs into one shared account whose password is random and unknown. Set `FAKEGUARD_DISABLE_DEMO=1` to turn it off.
+* **Guests** can still use `/analyze`, `/analyze-image`, `/verify-web` and all existing endpoints (unauthenticated, as before). Signing in saves each scan to the account (`/auth/save-scan`) and unlocks Rule Studio, Audit History and Print/PDF **in the UI**. This gating is a UI convenience, not access control: the keyword endpoints remain open on the server.
+* **Token storage**: `localStorage` (readable by any script on the page, so an XSS bug would expose it). The local Audit History tab is stored per browser, not per account.
+* Tests: `test_auth.py`; `conftest.py` points the DB at a temp file and uses cheap bcrypt rounds.

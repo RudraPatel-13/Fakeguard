@@ -1,7 +1,8 @@
 import { useState } from 'react'
-import ImageComparisonSlider from './ImageComparisonSlider.jsx'
+import ImageSlider from './ImageSlider.jsx'
 import { Panel, Tip, HighlightedText, Legend } from './common.jsx'
 import { riskColor, exportJson } from '../utils.js'
+import { usePrintReport } from '../usePrintReport.js'
 
 export function DualVerdict({ result }) {
   const v = result.dual_verdict
@@ -42,6 +43,7 @@ export function DualVerdict({ result }) {
 }
 
 export default function ImageForensicsViewer({ result, previewUrl }) {
+  const { isAuthenticated, printReport } = usePrintReport()
   const [showBoxes, setShowBoxes] = useState(true)
   const { ocr, ela, metadata } = result
   const matched = result.text_analysis?.matched_terms
@@ -51,7 +53,7 @@ export default function ImageForensicsViewer({ result, previewUrl }) {
     <div className="report">
       <div className="report-actions no-print">
         <button className="btn btn-ghost" onClick={() => exportJson('fakeguard-image-report', { ...result, ela: { ...result.ela, ela_image: null }, ocr: { ...result.ocr, words: [] } })}>⬇ JSON</button>
-        <button className="btn btn-ghost" onClick={() => window.print()}>🖨 Print / PDF</button>
+        <button className="btn btn-ghost" onClick={printReport}>{isAuthenticated ? '🖨' : '🔒'} Print / PDF</button>
       </div>
       <DualVerdict result={result} />
 
@@ -66,7 +68,7 @@ export default function ImageForensicsViewer({ result, previewUrl }) {
             </label>
           }
         >
-          <ImageComparisonSlider original={previewUrl} ela={ela.ela_image} overlays={result.keyword_overlays}
+          <ImageSlider original={previewUrl} ela={ela.ela_image} overlays={result.keyword_overlays}
             showBoxes={showBoxes} aspect={aspect} />
           {!ela.ela_image && <p className="note">ELA produced no visual (no measurable difference or skipped).</p>}
           <p className="note">{ela.limitation_note}</p>

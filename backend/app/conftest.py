@@ -3,6 +3,9 @@ import os
 import tempfile
 
 _tmp = tempfile.mkdtemp(prefix="fakeguard_models_")
+os.environ["FAKEGUARD_DB_URL"] = "sqlite:///" + os.path.join(_tmp, "auth_test.db").replace(chr(92), "/")
+os.environ.setdefault("FAKEGUARD_JWT_SECRET", "test-secret-not-for-production-0123456789")
+os.environ.setdefault("FAKEGUARD_BCRYPT_ROUNDS", "4")
 os.environ.setdefault("FAKEGUARD_MODEL_PATH", os.path.join(_tmp, "credibility_model.joblib"))
 os.environ.pop("FAKEGUARD_ONLINE", None)
 os.environ.pop("GOOGLE_FACTCHECK_API_KEY", None)

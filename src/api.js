@@ -15,8 +15,9 @@ async function request(path, options = {}) {
     /* non-JSON body */
   }
   if (!res.ok) {
+    const status = res.status
     const detail = body?.message || (typeof body?.detail === 'string' ? body.detail : null)
-    throw new Error(detail || `Request failed (HTTP ${res.status}).`)
+    throw Object.assign(new Error(detail || `Request failed (HTTP ${status}).`), { status })
   }
   return body
 }
@@ -41,3 +42,16 @@ export const getModelInfo = () => request('/model-info')
 export const getKeywordMeta = () => request('/keywords')
 export const getKeywordRules = () => request('/keywords/rules')
 export const reloadKeywords = () => request('/keywords/reload', { method: 'POST' })
+
+// ---- Accounts (JWT). The token is attached only to /auth calls that need it, never to analysis requests. ----
+let authToken = null
+export const setAuthToken = (t) => { authToken = t || null }
+const withAuth = (o = {}) => ({ ...o, headers: { ...(o.headers || {}), ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}) } })
+
+export const authRegister = (d) => request('/auth/register', json('POST', d))
+export const authLogin = (d) => request('/auth/login', json('POST', d))
+export const authDemo = () => request('/auth/demo', { method: 'POST' })
+export const authMe = () => request('/auth/me', withAuth())
+export const getScanHistory = (limit = 50) => request(`/auth/history?limit=${limit}`, withAuth())
+export const getScanStats = () => request('/auth/stats', withAuth())
+export const saveScan = (scan) => request('/auth/save-scan', withAuth(json('POST', scan)))

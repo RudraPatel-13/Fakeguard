@@ -1,8 +1,8 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { analyzeText } from '../api.js'
 import { useApp } from '../appContext.js'
 import CredibilityReport from './CredibilityReport.jsx'
-import LiveScanner from './LiveScanner.jsx'
+import LiveScannerHUD from './LiveScannerHUD.jsx'
 import PresetBar from './PresetBar.jsx'
 import { Panel } from './common.jsx'
 
@@ -39,14 +39,29 @@ export default function ArticleTab({ state, setState, onOpenImage }) {
     }
   }
 
+  // Types the preset into the box, then auto-runs the scan.
+  const typer = useRef(null)
+  useEffect(() => () => clearInterval(typer.current), [])
   const loadPreset = (p) => {
-    patch({ text: p.text, url: p.url || '', result: null })
-    run(p)
+    clearInterval(typer.current)
+    patch({ text: '', url: p.url || '', result: null })
+    const step = Math.max(2, Math.ceil(p.text.length / 45))
+    let n = 0
+    typer.current = setInterval(() => {
+      n += step
+      if (n >= p.text.length) {
+        clearInterval(typer.current)
+        patch({ text: p.text })
+        run(p)
+      } else {
+        patch({ text: p.text.slice(0, n) })
+      }
+    }, 16)
   }
 
   return (
     <div className="tab">
-      <Panel title="Article & text analysis" tip="Paste a headline or article. Rules, ML, live web corroboration and source trust are fused into one Credibility Index.">
+      <Panel className={loading ? "scanning" : ""} title="Article & text analysis" tip="Paste a headline or article. Rules, ML, live web corroboration and source trust are fused into one Credibility Index.">
         <PresetBar onText={loadPreset} onImage={onOpenImage} onError={(m) => toast(m, 'err')} />
         <textarea
           className="input area"
@@ -74,7 +89,7 @@ export default function ArticleTab({ state, setState, onOpenImage }) {
           <button className="btn" disabled={loading} onClick={() => patch({ text: '', url: '', result: null })}>Clear</button>
         </div>
       </Panel>
-      {loading && <LiveScanner skipWeb={!searchWeb} />}
+      {loading && <LiveScannerHUD skipWeb={!searchWeb} />}
       {!loading && result && <CredibilityReport result={result} text={analyzedText} name="fakeguard-credibility-audit" />}
     </div>
   )

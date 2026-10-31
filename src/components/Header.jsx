@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { getModelInfo } from '../api.js'
+import UserMenu from './UserMenu.jsx'
 
 const TABS = [
   ['article', 'Article & Text'],
@@ -42,6 +43,7 @@ export default function Header({ tab, setTab }) {
       <div className={`status status-${status.state}`} title="Backend connection">
         <i /> {status.state === 'up' ? `API online · ${status.mode}` : status.state === 'down' ? 'API offline' : 'connecting…'}
       </div>
+      <UserMenu />
     </header>
   )
 }

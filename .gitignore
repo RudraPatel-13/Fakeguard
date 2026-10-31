@@ -53,3 +53,6 @@ Thumbs.db
 
 # ML model artifact (auto-generated on first use)
 backend/app/models/*.joblib
+
+# Local accounts DB + JWT secret
+backend/app/data/

@@ -4,7 +4,7 @@ import { useApp } from '../appContext.js'
 import { Panel } from './common.jsx'
 import ImageForensicsViewer from './ImageForensicsViewer.jsx'
 import CredibilityReport from './CredibilityReport.jsx'
-import LiveScanner from './LiveScanner.jsx'
+import LiveScannerHUD from './LiveScannerHUD.jsx'
 import PresetBar from './PresetBar.jsx'
 
 const MAX_MB = 10
@@ -70,7 +70,7 @@ export default function ImageTab({ initialFile, onOpenImage, onText }) {
 
   return (
     <div className="tab">
-      <Panel title="Image & screenshot forensics" tip="Upload a newspaper clip, tweet screenshot or meme. EXIF + ELA forensics run alongside OCR, and the extracted text goes through rules, ML and live web verification.">
+      <Panel className={loading ? "scanning" : ""} title="Image & screenshot forensics" tip="Upload a newspaper clip, tweet screenshot or meme. EXIF + ELA forensics run alongside OCR, and the extracted text goes through rules, ML and live web verification.">
         <PresetBar onText={onText} onImage={onOpenImage} onError={(m) => toast(m, 'err')} />
         <div
           className={`drop ${over ? 'drop-over' : ''}`}
@@ -97,7 +97,7 @@ export default function ImageTab({ initialFile, onOpenImage, onText }) {
           <button className="btn btn-primary" disabled={!file || loading} onClick={() => run()}>{loading ? 'Scanning…' : 'Run forensics'}</button>
         </div>
       </Panel>
-      {loading && <LiveScanner />}
+      {loading && <LiveScannerHUD mode="image" />}
       {!loading && result && (
         <>
           <ImageForensicsViewer result={result} previewUrl={previewUrl} />

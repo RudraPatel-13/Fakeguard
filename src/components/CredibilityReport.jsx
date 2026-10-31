@@ -1,9 +1,12 @@
-import ScoreGauge from './ScoreGauge.jsx'
+import ScoreSpeedometer from './ScoreSpeedometer.jsx'
+import ResultCards from './ResultCards.jsx'
 import AxisChart from './AxisChart.jsx'
 import { Panel, Tip, HighlightedText, Legend } from './common.jsx'
 import { FactCheckView, DomainCard } from './Verification.jsx'
 import WebVerificationList from './WebVerificationList.jsx'
 import { exportJson } from '../utils.js'
+import { usePrintReport } from '../usePrintReport.js'
+
 
 function Attribution({ ml }) {
   if (!ml?.available) {
@@ -64,6 +67,7 @@ function Penalties({ fusion }) {
 
 /** Unified report for text scans (and the content half of image scans). */
 export default function CredibilityReport({ result, text, title = 'FakeGuard Credibility Index', name = 'fakeguard-report' }) {
+  const { isAuthenticated, printReport } = usePrintReport()
   const { fusion, ml } = result
   const matched = result.matched_terms || result.text_analysis?.matched_terms
   const indicators = result.indicators || result.text_analysis?.indicators || []
@@ -71,17 +75,17 @@ export default function CredibilityReport({ result, text, title = 'FakeGuard Cre
   const ruleClass = result.classification ?? result.text_analysis?.classification
 
   return (
-    <div className="report">
+    <ResultCards className="report">
       <div className="report-actions no-print">
         <button className="btn btn-ghost" onClick={() => exportJson(name, result)}>⬇ JSON</button>
-        <button className="btn btn-ghost" onClick={() => window.print()}>🖨 Print / PDF</button>
+        <button className="btn btn-ghost" onClick={printReport}>{isAuthenticated ? '🖨' : '🔒'} Print / PDF</button>
       </div>
 
       {fusion && (
         <div className="grid-2">
           <Panel title={title} tip="Index = w·Rules + w·ML + w·Web corroboration − Penalties (forensics, debunked claim, low-trust source). See breakdown.">
             <div className="gauge-row">
-              <ScoreGauge score={fusion.final_score} band={fusion.band} interval={fusion.interval} />
+              <ScoreSpeedometer score={fusion.final_score} band={fusion.band} interval={fusion.interval} />
               <div>
                 <p className="kv"><span>Rule engine</span><b>{ruleClass} <small>({ruleScore}/100 suspicion)</small></b></p>
                 <Penalties fusion={fusion} />
@@ -118,6 +122,6 @@ export default function CredibilityReport({ result, text, title = 'FakeGuard Cre
       {result.domain && (
         <Panel title="Source trust"><DomainCard domain={result.domain} /></Panel>
       )}
-    </div>
+    </ResultCards>
   )
 }

@@ -11,9 +11,9 @@ export function Tip({ text, children }) {
   )
 }
 
-export function Panel({ title, tip, actions, children, className = '' }) {
+export function Panel({ title, tip, actions, children, className = '', style }) {
   return (
-    <section className={`panel ${className}`}>
+    <section className={`panel ${className}`} style={style}>
       {(title || actions) && (
         <header className="panel-head">
           <h3>
@@ -27,13 +27,15 @@ export function Panel({ title, tip, actions, children, className = '' }) {
   )
 }
 
+const TOAST_ICON = { ok: '✓', warn: '!', err: '✕' }
+
 export function Toasts() {
   const { toasts, dismiss } = useApp()
   return (
     <div className="toasts" aria-live="polite">
       {toasts.map((t) => (
         <button key={t.id} className={`toast toast-${t.kind}`} onClick={() => dismiss(t.id)}>
-          <span className="toast-dot" />
+          <span className="toast-icon">{TOAST_ICON[t.kind] ?? 'i'}</span>
           {t.message}
         </button>
       ))}

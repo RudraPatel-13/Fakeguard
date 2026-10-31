@@ -4,7 +4,7 @@ import { useApp } from '../appContext.js'
 import { Panel } from './common.jsx'
 import { DomainCard, FactCheckView } from './Verification.jsx'
 import WebVerificationList from './WebVerificationList.jsx'
-import LiveScanner from './LiveScanner.jsx'
+import LiveScannerHUD from './LiveScannerHUD.jsx'
 import { exportJson } from '../utils.js'
 
 export default function UrlTab() {
@@ -42,7 +42,7 @@ export default function UrlTab() {
 
   return (
     <div className="tab">
-      <Panel title="URL & live web verifier" tip="Checks the publisher against a bundled reputation registry + heuristics and cross-checks claims against fact-check sources.">
+      <Panel className={loading ? "scanning" : ""} title="URL & live web verifier" tip="Checks the publisher against a bundled reputation registry + heuristics and cross-checks claims against fact-check sources.">
         <input className="input" placeholder="https://example.com/news/article" value={url} onChange={(e) => setUrl(e.target.value)} />
         <textarea className="input area" rows={4} value={text} onChange={(e) => setText(e.target.value)}
           placeholder="Optional: a specific claim or the article text to fact-check (with a URL in online mode, the page text is fetched if this is empty)" />
@@ -53,7 +53,7 @@ export default function UrlTab() {
           <button className="btn btn-primary" onClick={run} disabled={loading}>{loading ? 'Verifying…' : 'Verify'}</button>
         </div>
       </Panel>
-      {loading && <LiveScanner />}
+      {loading && <LiveScannerHUD />}
       {!loading && res && (
         <div className="report">
           <div className="report-actions no-print">

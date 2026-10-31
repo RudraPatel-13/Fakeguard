@@ -1,7 +1,7 @@
 import { PRESETS, makeNewspaperClip } from '../presets.js'
 
-/** One-click demo pills. `onText(preset)` loads a text sample; `onImage(file)` loads the sample clipping. */
-export default function PresetBar({ onText, onImage, onError }) {
+/** Levitating one-click demo pills. `onText(preset)` loads a text sample; `onImage(file)` loads the sample clipping. */
+export default function PresetBar({ onText, onImage, onError, disabled = false }) {
   async function clip() {
     try {
       onImage(await makeNewspaperClip())
@@ -10,12 +10,16 @@ export default function PresetBar({ onText, onImage, onError }) {
     }
   }
   return (
-    <div className="pills no-print">
-      <span className="muted">Quick tests</span>
-      {PRESETS.map((p) => (
-        <button key={p.id} className="pill" onClick={() => onText(p)}>{p.label}</button>
+    <div className="preset-ribbon no-print">
+      <span className="muted">One-click demos</span>
+      {PRESETS.map((p, i) => (
+        <button key={p.id} disabled={disabled} className={`gpill gpill-${p.tone}`} style={{ '--i': i }} onClick={() => onText(p)}>
+          <span aria-hidden="true">{p.icon}</span> {p.label}
+        </button>
       ))}
-      <button className="pill pill-accent" onClick={clip}>Try Uploading Newspaper Clip</button>
+      <button disabled={disabled} className="gpill gpill-ai" style={{ '--i': PRESETS.length }} onClick={clip}>
+        <span aria-hidden="true">🖼️</span> Photoshopped Document (Newspaper)
+      </button>
     </div>
   )
 }

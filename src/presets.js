@@ -2,28 +2,33 @@
 export const PRESETS = [
   {
     id: 'verified',
-    label: 'Try Verified News (BBC/AP)',
-    url: 'https://www.bbc.com/news/business',
+    icon: '🟢',
+    tone: 'good',
+    label: 'Reuters Official Press Release',
+    url: 'https://www.reuters.com/business/',
     text:
-      'The Bank of England held interest rates steady on Thursday, citing stable inflation and moderate wage growth, ' +
+      'LONDON (Reuters) - The Bank of England held interest rates steady on Thursday, citing stable inflation and moderate wage growth, ' +
       'according to a statement released after the Monetary Policy Committee meeting. Five members voted to hold and ' +
       'four voted for a cut, and economists surveyed by Reuters said they expect a cut later this year.',
   },
   {
-    id: 'scam',
-    label: 'Try Viral Clickbait Scam',
-    url: 'https://breaking-tech-truth-daily.xyz/free-phone',
+    id: 'rumor',
+    icon: '🔴',
+    tone: 'bad',
+    label: '5G Microchip Viral Conspiracy',
     text:
-      "You won't believe this! Shocking secret trick banned by Big Tech: get a FREE iPhone today!!! " +
-      'Whistleblower exposed the scam that banks hate. Doctors HATE this one weird trick. ' +
-      'Click here now, the offer is a limited miracle and will be deleted soon!!!',
+      'URGENT!!! Forward this to 10 people. 5G towers are spreading the coronavirus through secret microchips and the government is hiding the ' +
+      'shocking truth from you!!! NASA confirms six days of total darkness next week, a trusted source told us. Share now before they delete this!!!',
   },
   {
-    id: 'rumor',
-    label: 'Try Sensational Social Media Rumor',
+    id: 'gossip',
+    icon: '🟡',
+    tone: 'warn',
+    label: 'Clickbait Celebrity Gossip',
+    url: 'https://celeb-leaks-daily.xyz/shocking',
     text:
-      'URGENT!!! Forward this to 10 people. 5G towers are spreading the coronavirus and the government is hiding the ' +
-      'shocking truth from you!!! NASA confirms six days of total darkness next week, a trusted source told us. Share now before they delete this!!!',
+      "You won't believe what this A-list star was caught doing at 3AM! Fans are SPEECHLESS. Insiders reveal the shocking secret scandal " +
+      'the tabloids tried to hide. Doctors HATE this one weird trick for looking 20 years younger. Click here now to see the leaked photos before they get deleted!!!',
   },
 ]
 
