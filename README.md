@@ -347,4 +347,4 @@ Types used: `chore`, `feat`, `refactor`, `test`, `docs`.
 
 ## Author
 
-College mini-project — FakeGuard Phase 3.
+College mini-project — FakeGuard.
